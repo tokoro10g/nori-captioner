@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nori-captioner</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>nori-captioner</h1>
+        <p id="subtitle">Local Vision Caption Studio for Images and Video</p>
+      </div>
+      <div class="top-actions">
+        <label class="upload-pick">
+          <input
+            id="upload-input"
+            type="file"
+            multiple
+            accept="image/*,video/*"
+          />
+          Add Files
+        </label>
+        <select id="filter">
+          <option value="all">All</option>
+          <option value="uncaptioned">Uncaptioned</option>
+          <option value="captioned">Captioned</option>
+          <option value="queued">Queued</option>
+        </select>
+        <button id="caption-all">Caption All Uncaptioned</button>
+      </div>
+    </header>
+
+    <section class="statusbar">
+      <span id="model">Model: none</span>
+      <span id="queue">Queue: 0</span>
+      <span id="done">Done: 0</span>
+      <span id="errors">Errors: 0</span>
+      <span id="upload-status"></span>
+    </section>
+
+    <main>
+      <section class="settings-panel">
+        <div class="settings-head">
+          <h2>User Prompt</h2>
+          <button id="save-user-prompt">Save Prompt</button>
+        </div>
+        <textarea
+          id="user-prompt"
+          rows="5"
+          placeholder="User prompt for caption content"
+        ></textarea>
+        <p id="settings-status"></p>
+      </section>
+
+      <section id="drop-zone" class="drop-zone">
+        Drop images/videos here to upload
+      </section>
+      <div id="grid" class="grid"></div>
+      <section id="empty-state" class="empty-state" hidden>
+        <h2>No media files found</h2>
+        <p>
+          This folder does not contain supported images or videos yet.
+          Add files to this directory (or subdirectories) and refresh.
+        </p>
+      </section>
+      <div class="pager">
+        <button id="prev">Prev</button>
+        <span id="page-label">Page 1</span>
+        <button id="next">Next</button>
+      </div>
+    </main>
+
+    <template id="card-template">
+      <article class="card">
+        <div class="media-wrap"></div>
+        <div class="meta"></div>
+        <textarea rows="6" placeholder="Caption..."></textarea>
+        <div class="row">
+          <button class="save">Save</button>
+          <button class="auto">Auto caption</button>
+          <button class="delete">Delete</button>
+          <span class="state"></span>
+        </div>
+      </article>
+    </template>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
