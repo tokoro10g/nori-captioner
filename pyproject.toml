@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nori-captioner"
-version = "0.1.0"
+version = "0.1.1"
 description = "Simple local web UI for captioning image/video datasets with optional local VLM auto-captioning"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -74,7 +74,9 @@ explicit = true
 
 [dependency-groups]
 dev = [
+  "build>=1.4.2",
   "ruff>=0.15.7",
+  "twine>=6.2.0",
 ]
 
 [tool.ruff]

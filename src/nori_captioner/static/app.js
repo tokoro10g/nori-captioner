@@ -13,13 +13,42 @@ const state = {
 const grid = document.getElementById("grid");
 const template = document.getElementById("card-template");
 const emptyState = document.getElementById("empty-state");
-const pager = document.querySelector(".pager");
+const pagers = [
+  document.getElementById("pager-top"),
+  document.getElementById("pager-bottom"),
+];
+const pageLabels = [
+  document.getElementById("page-label-top"),
+  document.getElementById("page-label"),
+];
 const uploadInput = document.getElementById("upload-input");
 const uploadStatus = document.getElementById("upload-status");
 const dropZone = document.getElementById("drop-zone");
 const userPromptInput = document.getElementById("user-prompt");
 const saveUserPromptBtn = document.getElementById("save-user-prompt");
 const settingsStatus = document.getElementById("settings-status");
+
+function updatePagerUi(total) {
+  const label = `Page ${state.page} (${total})`;
+  for (const pageLabel of pageLabels) {
+    pageLabel.textContent = label;
+  }
+}
+
+async function goToPreviousPage() {
+  if (state.page > 1) {
+    state.page -= 1;
+    await loadFiles();
+  }
+}
+
+async function goToNextPage() {
+  const maxPage = Math.max(1, Math.ceil(state.total / state.perPage));
+  if (state.page < maxPage) {
+    state.page += 1;
+    await loadFiles();
+  }
+}
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -36,6 +65,11 @@ async function api(path, options = {}) {
     throw new Error(message || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+function applyCaptionState(card, text) {
+  const hasCaption = text.trim().length > 0;
+  card.dataset.state = hasCaption ? "captioned" : "idle";
 }
 
 function setStatusLine(status) {
@@ -147,7 +181,8 @@ function scheduleSave(fileId, textarea, stateEl) {
         body: JSON.stringify({ text: textarea.value }),
       });
       stateEl.textContent = "saved";
-      await loadFiles();
+      applyCaptionState(stateEl.closest(".card"), textarea.value);
+      await loadStatus();
     } catch (err) {
       stateEl.textContent = `save failed`;
       console.error(err);
@@ -199,12 +234,16 @@ async function renderItems(items, requestId) {
 
   if (items.length === 0) {
     emptyState.hidden = false;
-    pager.hidden = true;
+    for (const pager of pagers) {
+      pager.hidden = true;
+    }
     return;
   }
 
   emptyState.hidden = true;
-  pager.hidden = false;
+  for (const pager of pagers) {
+    pager.hidden = false;
+  }
   for (const item of items) {
     if (requestId !== state.loadRequestId) {
       return;
@@ -234,12 +273,18 @@ async function renderItems(items, requestId) {
     textarea.addEventListener("input", () => scheduleSave(item.id, textarea, stateEl));
     saveBtn.addEventListener("click", async () => {
       stateEl.textContent = "saving...";
-      await api(`/api/file/${item.id}/caption`, {
-        method: "PUT",
-        body: JSON.stringify({ text: textarea.value }),
-      });
-      stateEl.textContent = "saved";
-      await loadFiles();
+      try {
+        await api(`/api/file/${item.id}/caption`, {
+          method: "PUT",
+          body: JSON.stringify({ text: textarea.value }),
+        });
+        stateEl.textContent = "saved";
+        applyCaptionState(card, textarea.value);
+        await loadStatus();
+      } catch (err) {
+        stateEl.textContent = "save failed";
+        alert(`Save failed: ${err.message}`);
+      }
     });
 
     autoBtn.addEventListener("click", async () => {
@@ -289,7 +334,7 @@ async function loadFiles() {
   }
 
   state.total = data.total;
-  document.getElementById("page-label").textContent = `Page ${state.page} (${data.total})`;
+  updatePagerUi(data.total);
   await renderItems(data.items, requestId);
 }
 
@@ -383,20 +428,10 @@ captionAllBtn.addEventListener("click", async () => {
   }
 });
 
-document.getElementById("prev").addEventListener("click", async () => {
-  if (state.page > 1) {
-    state.page -= 1;
-    await loadFiles();
-  }
-});
-
-document.getElementById("next").addEventListener("click", async () => {
-  const maxPage = Math.max(1, Math.ceil(state.total / state.perPage));
-  if (state.page < maxPage) {
-    state.page += 1;
-    await loadFiles();
-  }
-});
+document.getElementById("prev").addEventListener("click", goToPreviousPage);
+document.getElementById("prev-top").addEventListener("click", goToPreviousPage);
+document.getElementById("next").addEventListener("click", goToNextPage);
+document.getElementById("next-top").addEventListener("click", goToNextPage);
 
 uploadInput.addEventListener("change", async () => {
   await uploadFiles(uploadInput.files);
