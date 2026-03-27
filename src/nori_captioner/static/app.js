@@ -3,7 +3,6 @@ const state = {
   perPage: 50,
   total: 0,
   filter: "all",
-  status: null,
   previousStatus: null,
   saveTimers: new Map(),
   cards: new Map(),
@@ -23,15 +22,82 @@ const pageLabels = [
 ];
 const uploadInput = document.getElementById("upload-input");
 const uploadStatus = document.getElementById("upload-status");
-const dropZone = document.getElementById("drop-zone");
 const userPromptInput = document.getElementById("user-prompt");
 const saveUserPromptBtn = document.getElementById("save-user-prompt");
 const settingsStatus = document.getElementById("settings-status");
+const modelStatusEl = document.getElementById("model");
+const queueStatusEl = document.getElementById("queue");
+const doneStatusEl = document.getElementById("done");
+const errorsStatusEl = document.getElementById("errors");
+let dragDepth = 0;
+
+function ensureDragOverlay() {
+  const existing = document.getElementById("drag-overlay");
+  if (existing) {
+    return existing;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "drag-overlay";
+  overlay.className = "drag-overlay";
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.hidden = true;
+
+  const inner = document.createElement("div");
+  inner.className = "drag-overlay-inner";
+  inner.textContent = "Drop files to upload";
+  overlay.appendChild(inner);
+
+  document.body.prepend(overlay);
+  return overlay;
+}
+
+const dragOverlay = ensureDragOverlay();
+
+function isFileDrag(event) {
+  const transfer = event.dataTransfer;
+  if (!transfer) {
+    return false;
+  }
+
+  const types = transfer.types;
+  if (!types) {
+    return Boolean(transfer.files?.length);
+  }
+
+  const hasType = (value) => {
+    if (typeof types.includes === "function" && types.includes(value)) {
+      return true;
+    }
+    if (typeof types.contains === "function" && types.contains(value)) {
+      return true;
+    }
+    return Array.from(types).includes(value);
+  };
+
+  return hasType("Files") || hasType("application/x-moz-file") || Boolean(transfer.files?.length);
+}
+
+function setDropActive(active) {
+  dragOverlay.hidden = !active;
+}
+
+function hasCaptionText(text) {
+  return text.trim().length > 0;
+}
 
 function updatePagerUi(total) {
   const label = `Page ${state.page} (${total})`;
   for (const pageLabel of pageLabels) {
     pageLabel.textContent = label;
+  }
+}
+
+function syncGridVisibility() {
+  const hasCards = grid.children.length > 0;
+  emptyState.hidden = hasCards;
+  for (const pager of pagers) {
+    pager.hidden = !hasCards;
   }
 }
 
@@ -68,15 +134,14 @@ async function api(path, options = {}) {
 }
 
 function applyCaptionState(card, text) {
-  const hasCaption = text.trim().length > 0;
-  card.dataset.state = hasCaption ? "captioned" : "idle";
+  card.dataset.state = hasCaptionText(text) ? "captioned" : "idle";
 }
 
 function setStatusLine(status) {
-  document.getElementById("model").textContent = `Model: ${status.model_id || "none"}`;
-  document.getElementById("queue").textContent = `Queue: ${status.queue_len}`;
-  document.getElementById("done").textContent = `Done: ${status.done}`;
-  document.getElementById("errors").textContent = `Errors: ${status.errors}`;
+  modelStatusEl.textContent = `Model: ${status.model_id || "none"}`;
+  queueStatusEl.textContent = `Queue: ${status.queue_len}`;
+  doneStatusEl.textContent = `Done: ${status.done}`;
+  errorsStatusEl.textContent = `Errors: ${status.errors}`;
 }
 
 function formatFps(value) {
@@ -169,17 +234,28 @@ async function loadCaption(fileId) {
   return data.text || "";
 }
 
+async function saveCaption(fileId, text) {
+  await api(`/api/file/${fileId}/caption`, {
+    method: "PUT",
+    body: JSON.stringify({ text }),
+  });
+}
+
 function scheduleSave(fileId, textarea, stateEl) {
+  // Clear stale state while the user is actively editing.
+  stateEl.textContent = "";
+  const card = stateEl.closest(".card");
+  if (card && card.dataset.state !== "queued" && card.dataset.state !== "running") {
+    card.dataset.state = "editing";
+  }
+
   if (state.saveTimers.has(fileId)) {
     clearTimeout(state.saveTimers.get(fileId));
   }
   const timer = setTimeout(async () => {
     stateEl.textContent = "saving...";
     try {
-      await api(`/api/file/${fileId}/caption`, {
-        method: "PUT",
-        body: JSON.stringify({ text: textarea.value }),
-      });
+      await saveCaption(fileId, textarea.value);
       stateEl.textContent = "saved";
       applyCaptionState(stateEl.closest(".card"), textarea.value);
       await loadStatus();
@@ -210,7 +286,7 @@ async function refreshCompletedCaptions(nextStatus) {
 
   const cardRef = state.cards.get(hadRunning);
   if (!cardRef) {
-    await loadFiles();
+    // Keep viewport stable: avoid full re-render when completed item is off-page.
     return;
   }
 
@@ -229,26 +305,37 @@ async function renderItems(items, requestId) {
     return;
   }
 
-  grid.innerHTML = "";
-  state.cards.clear();
-
   if (items.length === 0) {
-    emptyState.hidden = false;
-    for (const pager of pagers) {
-      pager.hidden = true;
-    }
+    grid.replaceChildren();
+    state.cards.clear();
+    syncGridVisibility();
     return;
   }
 
-  emptyState.hidden = true;
-  for (const pager of pagers) {
-    pager.hidden = false;
-  }
-  for (const item of items) {
-    if (requestId !== state.loadRequestId) {
-      return;
-    }
+  const captions = await Promise.all(
+    items.map(async (item) => {
+      try {
+        return await loadCaption(item.id);
+      } catch (err) {
+        console.error(err);
+        return "";
+      }
+    })
+  );
 
+  if (requestId !== state.loadRequestId) {
+    return;
+  }
+
+  const previousHeight = grid.getBoundingClientRect().height;
+  if (previousHeight > 0) {
+    grid.style.minHeight = `${Math.round(previousHeight)}px`;
+  }
+
+  const fragment = document.createDocumentFragment();
+  const nextCards = new Map();
+
+  for (const [idx, item] of items.entries()) {
     const card = template.content.firstElementChild.cloneNode(true);
     setMetaLines(card, item);
     card.querySelector(".media-wrap")?.remove();
@@ -260,24 +347,16 @@ async function renderItems(items, requestId) {
     const deleteBtn = card.querySelector(".delete");
     const stateEl = card.querySelector(".state");
 
-    const captionText = await loadCaption(item.id);
-    if (requestId !== state.loadRequestId) {
-      return;
-    }
-
-    textarea.value = captionText;
+    textarea.value = captions[idx] || "";
     setCardState(card, item);
     stateEl.textContent = item.state;
-  state.cards.set(item.id, { card, textarea, stateEl });
+    nextCards.set(item.id, { card, textarea, stateEl });
 
     textarea.addEventListener("input", () => scheduleSave(item.id, textarea, stateEl));
     saveBtn.addEventListener("click", async () => {
       stateEl.textContent = "saving...";
       try {
-        await api(`/api/file/${item.id}/caption`, {
-          method: "PUT",
-          body: JSON.stringify({ text: textarea.value }),
-        });
+        await saveCaption(item.id, textarea.value);
         stateEl.textContent = "saved";
         applyCaptionState(card, textarea.value);
         await loadStatus();
@@ -313,7 +392,19 @@ async function renderItems(items, requestId) {
       deleteBtn.disabled = true;
       try {
         await api(`/api/file/${item.id}`, { method: "DELETE" });
-        await refresh();
+
+        state.cards.delete(item.id);
+        card.remove();
+        state.total = Math.max(0, state.total - 1);
+        updatePagerUi(state.total);
+        syncGridVisibility();
+
+        if (grid.children.length === 0 && state.page > 1) {
+          state.page -= 1;
+          await loadFiles();
+        }
+
+        await loadStatus();
       } catch (err) {
         alert(`Delete failed: ${err.message}`);
       } finally {
@@ -321,8 +412,22 @@ async function renderItems(items, requestId) {
       }
     });
 
-    grid.appendChild(card);
+    fragment.appendChild(card);
   }
+
+  if (requestId !== state.loadRequestId) {
+    return;
+  }
+
+  grid.replaceChildren(fragment);
+  state.cards.clear();
+  for (const [id, ref] of nextCards) {
+    state.cards.set(id, ref);
+  }
+  syncGridVisibility();
+  requestAnimationFrame(() => {
+    grid.style.minHeight = "";
+  });
 }
 
 async function loadFiles() {
@@ -338,9 +443,15 @@ async function loadFiles() {
   await renderItems(data.items, requestId);
 }
 
+async function loadFilesPreserveScroll() {
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  await loadFiles();
+  window.scrollTo(scrollX, scrollY);
+}
+
 async function loadStatus() {
   const nextStatus = await api("/api/status");
-  state.status = nextStatus;
   setStatusLine(nextStatus);
   await refreshCompletedCaptions(nextStatus);
 }
@@ -379,15 +490,32 @@ async function uploadFiles(fileList) {
   uploadInput.disabled = true;
   uploadStatus.textContent = "Uploading...";
   try {
+    const previousTotal = state.total;
+    const previousMaxPage = Math.max(1, Math.ceil(previousTotal / state.perPage));
+    const isOnLastPageBeforeUpload = state.page === previousMaxPage;
+    const hadNoVisibleCards = grid.children.length === 0;
+
     const result = await api("/api/upload", {
       method: "POST",
       body: form,
     });
+    const uploadedCount = result.uploaded_count || 0;
     const skippedCount = result.skipped?.length || 0;
-    uploadStatus.textContent = `Uploaded ${result.uploaded_count}, skipped ${skippedCount}`;
+    uploadStatus.textContent = `Uploaded ${uploadedCount}, skipped ${skippedCount}`;
     uploadInput.value = "";
-    state.page = 1;
-    await refresh();
+
+    // Keep current cards stable. Newly uploaded files show on next paging/filter/reload.
+    if (state.filter === "all" || state.filter === "uncaptioned") {
+      state.total += uploadedCount;
+      updatePagerUi(state.total);
+      syncGridVisibility();
+
+      // Refresh only when the visible page can change due to new uploads.
+      if (uploadedCount > 0 && (hadNoVisibleCards || isOnLastPageBeforeUpload)) {
+        await loadFilesPreserveScroll();
+      }
+    }
+    await loadStatus();
   } catch (err) {
     uploadStatus.textContent = "Upload failed";
     alert(`Upload failed: ${err.message}`);
@@ -437,24 +565,44 @@ uploadInput.addEventListener("change", async () => {
   await uploadFiles(uploadInput.files);
 });
 
-dropZone.addEventListener("dragenter", (event) => {
+window.addEventListener("dragenter", (event) => {
+  if (!isFileDrag(event)) {
+    return;
+  }
   event.preventDefault();
-  dropZone.classList.add("active");
+  dragDepth += 1;
+  setDropActive(true);
 });
 
-dropZone.addEventListener("dragover", (event) => {
+window.addEventListener("dragover", (event) => {
+  if (!isFileDrag(event)) {
+    return;
+  }
   event.preventDefault();
-  dropZone.classList.add("active");
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+  setDropActive(true);
 });
 
-dropZone.addEventListener("dragleave", (event) => {
+window.addEventListener("dragleave", (event) => {
+  if (!isFileDrag(event)) {
+    return;
+  }
   event.preventDefault();
-  dropZone.classList.remove("active");
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) {
+    setDropActive(false);
+  }
 });
 
-dropZone.addEventListener("drop", async (event) => {
+window.addEventListener("drop", async (event) => {
+  if (!isFileDrag(event)) {
+    return;
+  }
   event.preventDefault();
-  dropZone.classList.remove("active");
+  dragDepth = 0;
+  setDropActive(false);
   const files = event.dataTransfer?.files;
   await uploadFiles(files);
 });

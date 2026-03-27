@@ -7,6 +7,9 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <div id="drag-overlay" class="drag-overlay" aria-hidden="true" hidden>
+      <div class="drag-overlay-inner">Drop files to upload</div>
+    </div>
     <header class="topbar">
       <div>
         <h1>nori-captioner</h1>
@@ -54,9 +57,6 @@
         <p id="settings-status"></p>
       </section>
 
-      <section id="drop-zone" class="drop-zone">
-        Drop images/videos here to upload
-      </section>
       <div id="pager-top" class="pager" hidden>
         <button id="prev-top">Prev</button>
         <span id="page-label-top">Page 1</span>

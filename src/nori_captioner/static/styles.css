@@ -1,6 +1,5 @@
 :root {
   --bg: #0e141b;
-  --panel: #18222f;
   --text: #edf3f8;
   --muted: #97a8bb;
   --good: #2ea96a;
@@ -23,6 +22,32 @@ body {
     var(--bg);
   background-attachment: fixed;
   color: var(--text);
+}
+
+.drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(14, 20, 27, 0.7);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.drag-overlay[hidden] {
+  display: none;
+}
+
+.drag-overlay-inner {
+  border: 2px dashed var(--warn);
+  border-radius: 16px;
+  background: rgba(16, 26, 38, 0.88);
+  color: var(--text);
+  padding: 1rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .topbar {
@@ -56,10 +81,6 @@ h1 {
   font-size: 0.95rem;
   line-height: 1.2;
   padding: 0.55rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #101a26;
-  color: var(--text);
   cursor: pointer;
 }
 
@@ -67,6 +88,7 @@ h1 {
   display: none;
 }
 
+.upload-pick,
 button,
 select,
 textarea {
@@ -131,23 +153,6 @@ main {
   margin: 0.45rem 0 0;
   color: var(--muted);
   font-size: 0.85rem;
-}
-
-.drop-zone {
-  margin: 0 0 0.9rem;
-  padding: 0.8rem 1rem;
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  color: var(--muted);
-  text-align: center;
-  background: rgba(16, 26, 38, 0.45);
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
-}
-
-.drop-zone.active {
-  border-color: var(--warn);
-  background: rgba(45, 138, 214, 0.12);
-  color: var(--text);
 }
 
 .grid {
