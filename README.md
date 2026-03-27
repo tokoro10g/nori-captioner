@@ -8,13 +8,13 @@ Captions are saved as sidecar `.txt` files next to each media file.
 ## Quick start
 
 ```bash
-uv run nori-captioner
+uvx nori-captioner
 ```
 
 Scans the current directory (or a given path) recursively for images and videos and opens a local web UI.
 
 ```bash
-uv run nori-captioner /path/to/dataset
+uvx nori-captioner /path/to/dataset
 ```
 
 ## Features
@@ -30,10 +30,10 @@ uv run nori-captioner /path/to/dataset
 
 ## Auto-captioning with local VLMs
 
-Install VLM extras:
+Run with VLM extras:
 
 ```bash
-uv sync --extra vlm
+uvx --from 'nori-captioner[vlm]' nori-captioner
 ```
 
 > **Note:** Qwen3-VL requires `torchvision`, which is included in the `vlm` extra.
@@ -42,19 +42,19 @@ uv sync --extra vlm
 Optional 4-bit / 8-bit quantization:
 
 ```bash
-uv sync --extra vlm --extra quantize
+uvx --from 'nori-captioner[vlm,quantize]' nori-captioner
 ```
 
 Run with a built-in model alias:
 
 ```bash
-uv run nori-captioner --model qwen3-vl:8b
+uvx --from 'nori-captioner[vlm]' nori-captioner --model qwen3-vl:8b
 ```
 
 Or pass any Hugging Face model ID directly:
 
 ```bash
-uv run nori-captioner --model your-org/your-vlm
+uvx --from 'nori-captioner[vlm]' nori-captioner --model your-org/your-vlm
 ```
 
 ### Model aliases
