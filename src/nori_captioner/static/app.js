@@ -134,6 +134,10 @@ async function api(path, options = {}) {
 }
 
 function applyCaptionState(card, text) {
+  if (card.dataset.captionLocked === "true") {
+    card.dataset.state = "locked";
+    return;
+  }
   card.dataset.state = hasCaptionText(text) ? "captioned" : "idle";
 }
 
@@ -174,6 +178,10 @@ function buildMetaStatsText(item) {
     parts.push(`${item.width}x${item.height}px`);
   }
 
+  if (item.caption_locked) {
+    parts.push("caption locked");
+  }
+
   if (item.media_type === "video") {
     const durationText = formatDuration(item.duration_seconds);
     if (durationText) {
@@ -189,6 +197,48 @@ function buildMetaStatsText(item) {
   }
 
   return parts.join(" | ");
+}
+
+function setCaptionLockControls(button, textarea, saveBtn, autoBtn, item) {
+  button.textContent = item.caption_locked ? "Unlock Caption" : "Lock Caption";
+  button.classList.toggle("is-locked", item.caption_locked);
+  const card = button.closest(".card");
+  if (card) {
+    card.dataset.captionLocked = String(item.caption_locked);
+    if (card.dataset.state !== "queued" && card.dataset.state !== "running") {
+      card.dataset.state = item.caption_locked
+        ? "locked"
+        : hasCaptionText(textarea.value)
+          ? "captioned"
+          : "idle";
+    }
+  }
+  textarea.disabled = item.caption_locked;
+  saveBtn.disabled = item.caption_locked;
+  autoBtn.disabled = item.caption_locked;
+}
+
+async function toggleCaptionLock(fileId) {
+  const cardRef = state.cards.get(fileId);
+  if (!cardRef) {
+    return;
+  }
+
+  const { item, textarea, saveBtn, autoBtn, captionLockBtn, card } = cardRef;
+  captionLockBtn.disabled = true;
+  try {
+    const result = await api(`/api/file/${fileId}/caption-lock`, {
+      method: "PUT",
+      body: JSON.stringify({ locked: !item.caption_locked }),
+    });
+    item.caption_locked = result.caption_locked;
+    setCaptionLockControls(captionLockBtn, textarea, saveBtn, autoBtn, item);
+    setMetaLines(card, item);
+  } catch (err) {
+    alert(`Caption lock update failed: ${err.message}`);
+  } finally {
+    captionLockBtn.disabled = false;
+  }
 }
 
 function setMetaLines(card, item) {
@@ -268,7 +318,8 @@ function scheduleSave(fileId, textarea, stateEl) {
 }
 
 function setCardState(card, item) {
-  card.dataset.state = item.state || (item.has_caption ? "captioned" : "idle");
+  card.dataset.captionLocked = String(Boolean(item.caption_locked));
+  card.dataset.state = item.state || (item.caption_locked ? "locked" : item.has_caption ? "captioned" : "idle");
 }
 
 async function refreshCompletedCaptions(nextStatus) {
@@ -293,8 +344,8 @@ async function refreshCompletedCaptions(nextStatus) {
   try {
     const text = await loadCaption(hadRunning);
     cardRef.textarea.value = text;
-    cardRef.stateEl.textContent = "captioned";
-    cardRef.card.dataset.state = "captioned";
+    cardRef.stateEl.textContent = cardRef.item.caption_locked ? "locked" : "captioned";
+    cardRef.card.dataset.state = cardRef.item.caption_locked ? "locked" : "captioned";
   } catch (err) {
     console.error(err);
   }
@@ -337,11 +388,13 @@ async function renderItems(items, requestId) {
 
   for (const [idx, item] of items.entries()) {
     const card = template.content.firstElementChild.cloneNode(true);
+    card.dataset.fileId = String(item.id);
     setMetaLines(card, item);
     card.querySelector(".media-wrap")?.remove();
     card.prepend(makeMediaEl(item));
 
     const textarea = card.querySelector("textarea");
+    const captionLockBtn = card.querySelector(".caption-lock");
     const saveBtn = card.querySelector(".save");
     const autoBtn = card.querySelector(".auto");
     const deleteBtn = card.querySelector(".delete");
@@ -350,7 +403,16 @@ async function renderItems(items, requestId) {
     textarea.value = captions[idx] || "";
     setCardState(card, item);
     stateEl.textContent = item.state;
-    nextCards.set(item.id, { card, textarea, stateEl });
+    setCaptionLockControls(captionLockBtn, textarea, saveBtn, autoBtn, item);
+    nextCards.set(item.id, {
+      item,
+      card,
+      textarea,
+      stateEl,
+      saveBtn,
+      autoBtn,
+      captionLockBtn,
+    });
 
     textarea.addEventListener("input", () => scheduleSave(item.id, textarea, stateEl));
     saveBtn.addEventListener("click", async () => {
@@ -505,7 +567,7 @@ async function uploadFiles(fileList) {
     uploadInput.value = "";
 
     // Keep current cards stable. Newly uploaded files show on next paging/filter/reload.
-    if (state.filter === "all" || state.filter === "uncaptioned") {
+    if (state.filter === "all" || state.filter === "uncaptioned" || state.filter === "unlocked") {
       state.total += uploadedCount;
       updatePagerUi(state.total);
       syncGridVisibility();
@@ -530,13 +592,20 @@ document.getElementById("filter").addEventListener("change", async (e) => {
   await loadFiles();
 });
 
-const captionAllBtn = document.getElementById("caption-all");
+const captionAllUncaptionedBtn = document.getElementById("caption-all-uncaptioned");
+const captionAllUnlockedBtn = document.getElementById("caption-all-unlocked");
 
-captionAllBtn.addEventListener("click", async () => {
-  captionAllBtn.disabled = true;
+async function queueBatch(filterMode, button) {
+  button.disabled = true;
 
   for (const cardRef of state.cards.values()) {
-    if (cardRef.card.dataset.state === "idle") {
+    if (cardRef.item.caption_locked) {
+      continue;
+    }
+    if (filterMode === "uncaptioned" && hasCaptionText(cardRef.textarea.value)) {
+      continue;
+    }
+    if (cardRef.card.dataset.state !== "queued" && cardRef.card.dataset.state !== "running") {
       cardRef.card.dataset.state = "queued";
       cardRef.stateEl.textContent = "queued";
     }
@@ -545,15 +614,23 @@ captionAllBtn.addEventListener("click", async () => {
   try {
     await api("/api/autocaption/batch", {
       method: "POST",
-      body: JSON.stringify({ filter: "uncaptioned" }),
+      body: JSON.stringify({ filter: filterMode }),
     });
     // Keep current DOM stable: update counters without full list re-render.
     await loadStatus();
   } catch (err) {
     alert(`Batch queue failed: ${err.message}`);
   } finally {
-    captionAllBtn.disabled = false;
+    button.disabled = false;
   }
+}
+
+captionAllUncaptionedBtn.addEventListener("click", async () => {
+  await queueBatch("uncaptioned", captionAllUncaptionedBtn);
+});
+
+captionAllUnlockedBtn.addEventListener("click", async () => {
+  await queueBatch("unlocked", captionAllUnlockedBtn);
 });
 
 document.getElementById("prev").addEventListener("click", goToPreviousPage);
@@ -563,6 +640,23 @@ document.getElementById("next-top").addEventListener("click", goToNextPage);
 
 uploadInput.addEventListener("change", async () => {
   await uploadFiles(uploadInput.files);
+});
+
+grid.addEventListener("click", async (event) => {
+  const button = event.target.closest(".caption-lock");
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const card = button.closest(".card");
+  const fileId = Number(card?.dataset.fileId);
+  if (!Number.isInteger(fileId)) {
+    return;
+  }
+
+  await toggleCaptionLock(fileId);
 });
 
 window.addEventListener("dragenter", (event) => {

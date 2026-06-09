@@ -52,6 +52,10 @@ class SettingsUpdate(BaseModel):
     prompt: str | None = None
 
 
+class CaptionLockUpdate(BaseModel):
+    locked: bool
+
+
 def _settings_file(root: Path) -> Path:
     return root / ".nori-captioner.settings.json"
 
@@ -59,24 +63,46 @@ def _settings_file(root: Path) -> Path:
 def _load_saved_settings(root: Path) -> dict[str, str | None]:
     path = _settings_file(root)
     if not path.exists():
-        return {"system_prompt": None, "prompt": None}
+        return {"system_prompt": None, "prompt": None, "caption_locks": set()}
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"system_prompt": None, "prompt": None}
+        return {"system_prompt": None, "prompt": None, "caption_locks": set()}
+
+    caption_locks = data.get("caption_locks")
+    if isinstance(caption_locks, list):
+        cleaned_caption_locks = {
+            rel_path for rel_path in caption_locks if isinstance(rel_path, str)
+        }
+    elif isinstance(caption_locks, dict):
+        cleaned_caption_locks = {
+            str(rel_path)
+            for rel_path, locked in caption_locks.items()
+            if isinstance(rel_path, str) and bool(locked)
+        }
+    else:
+        cleaned_caption_locks = set()
 
     return {
         "system_prompt": data.get("system_prompt"),
         "prompt": data.get("prompt"),
+        "caption_locks": cleaned_caption_locks,
     }
 
 
-def _save_settings(root: Path, *, system_prompt: str, prompt: str) -> None:
+def _save_settings(
+    root: Path,
+    *,
+    system_prompt: str,
+    prompt: str,
+    caption_locks: set[str],
+) -> None:
     path = _settings_file(root)
     payload = {
         "system_prompt": system_prompt,
         "prompt": prompt,
+        "caption_locks": sorted(caption_locks),
     }
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
@@ -96,12 +122,15 @@ def _dedupe_destination(root: Path, requested_name: str) -> Path:
 def _serialize_file(item: MediaFile, status: dict) -> dict:
     queued_ids = set(status["queued_ids"])
     running_id = status["running_id"]
+    caption_locked = item.rel_path in status["caption_locked_paths"]
 
     state = "idle"
     if item.id == running_id:
         state = "running"
     elif item.id in queued_ids:
         state = "queued"
+    elif caption_locked:
+        state = "locked"
     elif item.has_caption:
         state = "captioned"
 
@@ -111,6 +140,7 @@ def _serialize_file(item: MediaFile, status: dict) -> dict:
         "media_type": item.media_type,
         "has_caption": item.has_caption,
         "state": state,
+        "caption_locked": caption_locked,
         "width": item.width,
         "height": item.height,
         "frame_count": item.frame_count,
@@ -132,10 +162,19 @@ def create_app(config: AppConfig) -> FastAPI:
         model_spec=config.model,
         system_prompt=config.system_prompt,
         prompt=config.prompt,
+        caption_locks=saved_settings["caption_locks"],
         frames_per_video=config.frames,
         quantize=config.quantize,
         device=config.device,
     )
+
+    def persist_settings() -> None:
+        _save_settings(
+            config.root,
+            system_prompt=captioner.system_prompt,
+            prompt=captioner.prompt,
+            caption_locks=captioner.caption_locks,
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -161,14 +200,19 @@ def create_app(config: AppConfig) -> FastAPI:
         per_page: int = Query(default=50, ge=1, le=500),
         filter: str = Query(default="all"),
     ) -> JSONResponse:
-        status = captioner.status()
+        status = captioner.status() | {"caption_locked_paths": set(captioner.caption_locks)}
         queued_ids = set(status["queued_ids"])
+        locked_paths = status["caption_locked_paths"]
 
         filtered = [m for m in media_files if m is not None]
         if filter == "captioned":
             filtered = [m for m in media_files if m is not None and m.has_caption]
         elif filter == "uncaptioned":
             filtered = [m for m in media_files if m is not None and not m.has_caption]
+        elif filter == "locked":
+            filtered = [m for m in media_files if m is not None and m.rel_path in locked_paths]
+        elif filter == "unlocked":
+            filtered = [m for m in media_files if m is not None and m.rel_path not in locked_paths]
         elif filter == "queued":
             filtered = [
                 m
@@ -202,6 +246,8 @@ def create_app(config: AppConfig) -> FastAPI:
         from .scanner import write_caption
 
         media = media_files[file_id]
+        if captioner.is_caption_locked(media):
+            raise HTTPException(status_code=409, detail="Caption is locked")
         write_caption(media.abs_path, update.text)
         media.has_caption = has_nonempty_caption(media.abs_path)
         return JSONResponse({"ok": True})
@@ -222,6 +268,7 @@ def create_app(config: AppConfig) -> FastAPI:
 
         media = media_files[file_id]
         caption_path = caption_sidecar_path(media.abs_path)
+        captioner.clear_caption_lock(media)
 
         try:
             media.abs_path.unlink(missing_ok=True)
@@ -230,14 +277,37 @@ def create_app(config: AppConfig) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
 
         media_files[file_id] = None
+        persist_settings()
 
         return JSONResponse({"ok": True})
+
+    @app.put("/api/file/{file_id}/caption-lock")
+    async def put_caption_lock(file_id: int, update: CaptionLockUpdate) -> JSONResponse:
+        if file_id < 0 or file_id >= len(media_files) or media_files[file_id] is None:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        media = media_files[file_id]
+        if update.locked:
+            captioner.set_caption_lock(media)
+        else:
+            captioner.clear_caption_lock(media)
+
+        try:
+            persist_settings()
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to save settings: {exc}") from exc
+
+        return JSONResponse({"ok": True, "caption_locked": captioner.is_caption_locked(media)})
 
     @app.post("/api/autocaption/batch")
     async def queue_batch(request: BatchRequest) -> JSONResponse:
         if captioner.model_id is None:
             raise HTTPException(status_code=400, detail="No model configured. Start with --model")
-        mode = request.filter if request.filter in {"all", "uncaptioned"} else "uncaptioned"
+        mode = (
+            request.filter
+            if request.filter in {"all", "uncaptioned", "unlocked"}
+            else "uncaptioned"
+        )
         queued_count = captioner.enqueue_batch(mode)
         return JSONResponse({"queued_count": queued_count})
 
@@ -245,6 +315,11 @@ def create_app(config: AppConfig) -> FastAPI:
     async def queue_one(file_id: int) -> JSONResponse:
         if captioner.model_id is None:
             raise HTTPException(status_code=400, detail="No model configured. Start with --model")
+        if file_id < 0 or file_id >= len(media_files) or media_files[file_id] is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        media = media_files[file_id]
+        if captioner.is_caption_locked(media):
+            raise HTTPException(status_code=409, detail="Caption is locked")
         queued = captioner.enqueue(file_id)
         if not queued:
             raise HTTPException(status_code=400, detail="File already queued/running or invalid")
@@ -276,11 +351,7 @@ def create_app(config: AppConfig) -> FastAPI:
             captioner.prompt = update.prompt
 
         try:
-            _save_settings(
-                config.root,
-                system_prompt=captioner.system_prompt,
-                prompt=captioner.prompt,
-            )
+            persist_settings()
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Failed to save settings: {exc}") from exc
 

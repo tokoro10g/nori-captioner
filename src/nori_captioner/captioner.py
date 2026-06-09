@@ -56,6 +56,7 @@ class CaptionerService:
         model_spec: str | None,
         system_prompt: str,
         prompt: str,
+        caption_locks: set[str] | None,
         frames_per_video: int,
         quantize: int | None,
         device: str,
@@ -63,6 +64,7 @@ class CaptionerService:
         self.media_files = media_files
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self.prompt = prompt or DEFAULT_PROMPT
+        self.caption_locks = set(caption_locks or set())
         self.frames_per_video = max(1, frames_per_video)
         self.quantize = quantize
         self.device = device
@@ -200,6 +202,8 @@ class CaptionerService:
             return False
         if self.media_files[file_id] is None:
             return False
+        if self.is_caption_locked(self.media_files[file_id]):
+            return False
         if file_id in self.queued_ids or self.running_id == file_id:
             return False
         self.queued_ids.add(file_id)
@@ -210,6 +214,8 @@ class CaptionerService:
         added = 0
         for media in self.media_files:
             if media is None:
+                continue
+            if self.is_caption_locked(media):
                 continue
             caption_exists = has_nonempty_caption(media.abs_path)
             if mode == "uncaptioned" and caption_exists:
@@ -244,11 +250,22 @@ class CaptionerService:
             "last_error": self.last_error,
         }
 
+    def is_caption_locked(self, media: MediaFile) -> bool:
+        return media.rel_path in self.caption_locks
+
+    def set_caption_lock(self, media: MediaFile) -> None:
+        self.caption_locks.add(media.rel_path)
+
+    def clear_caption_lock(self, media: MediaFile) -> None:
+        self.caption_locks.discard(media.rel_path)
+
     async def _run_caption_task(self, media: MediaFile) -> None:
         if self.captioner is None:
             self.load_model()
         if self.captioner is None:
             raise RuntimeError("No model loaded")
+        if self.is_caption_locked(media):
+            raise RuntimeError("Caption is locked")
 
         loop = asyncio.get_running_loop()
 

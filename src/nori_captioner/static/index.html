@@ -29,9 +29,12 @@
           <option value="all">All</option>
           <option value="uncaptioned">Uncaptioned</option>
           <option value="captioned">Captioned</option>
+          <option value="unlocked">Unlocked</option>
+          <option value="locked">Locked</option>
           <option value="queued">Queued</option>
         </select>
-        <button id="caption-all">Caption All Uncaptioned</button>
+        <button id="caption-all-uncaptioned">Caption All Uncaptioned</button>
+        <button id="caption-all-unlocked">Caption All Unlocked</button>
       </div>
     </header>
 
@@ -83,9 +86,10 @@
         <div class="meta"></div>
         <textarea rows="6" placeholder="Caption..."></textarea>
         <div class="row">
-          <button class="save">Save</button>
-          <button class="auto">Auto caption</button>
-          <button class="delete">Delete</button>
+          <button type="button" class="caption-lock">Lock Caption</button>
+          <button type="button" class="save">Save</button>
+          <button type="button" class="auto">Auto caption</button>
+          <button type="button" class="delete">Delete</button>
           <span class="state"></span>
         </div>
       </article>

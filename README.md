@@ -21,12 +21,13 @@ uvx nori-captioner /path/to/dataset
 
 - Recursive directory scan — hidden directories are excluded
 - Per-file metadata display: resolution, duration, frame count, fps
-- Manual caption editing with autosave
+- Manual caption editing with autosave and save-state feedback
 - Upload images/videos via file picker or drag-and-drop
 - Delete files (removes media and sidecar caption together)
+- Caption lock support with persistent locked state per media item
 - Auto-captioning queue with single-file and batch modes
 - Configurable user prompt — editable in the UI and persisted to disk
-- Pagination and filter by caption state (all / captioned / uncaptioned / queued)
+- Pagination and filters for all / captioned / uncaptioned / unlocked / locked / queued
 
 ## Auto-captioning with local VLMs
 

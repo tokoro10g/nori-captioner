@@ -3,6 +3,7 @@
   --text: #edf3f8;
   --muted: #97a8bb;
   --good: #2ea96a;
+  --locked: #8d59d9;
   --warn: #2d8ad6;
   --bad: #d64646;
   --border: #2e3f52;
@@ -175,6 +176,10 @@ main {
   border-color: var(--good);
 }
 
+.card[data-state="locked"] {
+  border-color: var(--locked);
+}
+
 .card[data-state="queued"],
 .card[data-state="running"] {
   border-color: var(--warn);
@@ -238,9 +243,20 @@ textarea {
 }
 
 .row {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+.row button {
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.row .caption-lock.is-locked {
+  border-color: color-mix(in srgb, var(--good) 60%, var(--border));
 }
 
 .row .delete {
@@ -252,9 +268,12 @@ textarea {
 }
 
 .row .state {
-  margin-left: auto;
+  grid-column: 1 / -1;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.85rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .pager {
