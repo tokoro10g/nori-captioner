@@ -263,15 +263,17 @@ function makeMediaEl(item) {
   const wrap = document.createElement("div");
   wrap.className = "media-wrap";
 
+  const cacheBuster = item.mtime ? `?v=${item.mtime}` : "";
+
   if (item.media_type === "video") {
     const el = document.createElement("video");
     el.controls = true;
-    el.src = `/media/${item.id}`;
+    el.src = `/media/${item.id}${cacheBuster}`;
     el.preload = "metadata";
     wrap.appendChild(el);
   } else {
     const el = document.createElement("img");
-    el.src = `/media/${item.id}`;
+    el.src = `/media/${item.id}${cacheBuster}`;
     el.loading = "lazy";
     wrap.appendChild(el);
   }

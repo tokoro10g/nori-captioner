@@ -141,6 +141,7 @@ def _serialize_file(item: MediaFile, status: dict) -> dict:
         "has_caption": item.has_caption,
         "state": state,
         "caption_locked": caption_locked,
+        "mtime": item.mtime,
         "width": item.width,
         "height": item.height,
         "frame_count": item.frame_count,
@@ -398,6 +399,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 rel_path=str(destination.relative_to(config.root)),
                 media_type=media_type,
                 has_caption=has_nonempty_caption(destination),
+                mtime=int(destination.stat().st_mtime),
                 **probe_media_metadata(destination, media_type),
             )
             media_files.append(media)

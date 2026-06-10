@@ -36,6 +36,7 @@ class MediaFile:
     frame_count: int | None = None
     fps: float | None = None
     duration_seconds: float | None = None
+    mtime: int = 0
 
 
 def probe_media_metadata(path: Path, media_type: str) -> dict[str, int | float | None]:
@@ -171,6 +172,7 @@ def scan_directory(root: Path) -> list[MediaFile]:
                     frame_count=metadata["frame_count"],
                     fps=metadata["fps"],
                     duration_seconds=metadata["duration_seconds"],
+                    mtime=int(path.stat().st_mtime),
                 )
             )
     return found
